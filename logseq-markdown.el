@@ -12,6 +12,42 @@
 ;;
 
 ;;
+;; Logseq HTTP Server
+;;
+
+(defvar logseq-token nil)
+
+(defmacro logseq--post-to-http-server (parameters callback)
+  `(let ((url-request-method "POST")
+         (url-request-extra-headers `(("Content-Type" . "application/json")
+                                      ("Authorization" . ,(format "Bearer %s" logseq-token))))
+         (url-request-data ,(json-encode parameters)))
+     (url-retrieve "http://127.0.0.1:12315/api" ,callback nil t)))
+
+(defun logseq--callback-skip-header ()
+  (search-forward "\n\n" nil t))
+
+;;
+;; Pages
+;;
+
+(defvar logseq-pages-result nil)
+
+(defun logseq-get-all-pages ()
+  (interactive)
+  (logseq--post-to-http-server (("method" . "logseq.Editor.getAllPages"))
+                               'logseq--get-all-pages-callback))
+
+(defun logseq--get-all-pages-callback (status)
+  (unless (plist-get status :error)
+    (let ((json-object-type 'plist))
+      (unwind-protect
+          (let* ((raw-string (progn (logseq--callback-skip-header)
+                                    (buffer-substring-no-properties (point) (point-max))))
+                 (json-data (json-read-from-string (decode-coding-string raw-string 'utf-8))))
+            (setq logseq-pages-result json-data))))))
+
+;;
 ;; outline-minor-mode
 ;;
 
@@ -116,5 +152,13 @@ See `imenu-create-index-function' and `imenu--index-alist' for details."
   (markdown-toggle-wiki-links t)
   ;; imenu
   (setq imenu-create-index-function #'logseq-markdown-imenu-create-nested-index))
+
+;;
+;; key map
+;;
+
+(let ((map logseq-mode-map))
+  (define-key map "\C-c\C-r" 'logseq-get-all-pages)
+)
 
 (provide 'logseq-markdown)
