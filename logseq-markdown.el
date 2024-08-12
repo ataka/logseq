@@ -11,6 +11,8 @@
 ;;            (logseq-markdown-mode))))))
 ;;
 
+(require 'seq)
+
 ;;
 ;; Logseq HTTP Server
 ;;
@@ -130,6 +132,210 @@
   (insert (format "[[%s]]" page-name)))
 
 ;;
+;; Export
+;;
+
+(defun logseq-markdown-export (beg end)
+  (interactive (if (use-region-p)
+                   (list (region-beginning) (region-end))
+                 (list (point-min) (point-max))))
+  (logseq-markdown-export-region beg end))
+
+(defun logseq-markdown-export-region (beg end)
+  (interactive "r")
+  (save-excursion
+    (save-restriction
+      (narrow-to-region beg end)
+      (goto-char beg)
+      (let ((page-property (logseq-markdown--parse-page-property))
+            (ast (logseq-markdown--parse-body)))
+        (switch-to-buffer-other-window " *Logseq-markdown*")
+        (goto-char (point-min))
+        (logseq-markdown--export-as-markdown ast)
+        (logseq-markdown--remove-wiki-link)))))
+
+(defun logseq-markdown--parse-page-property ()
+  (let ((property '())
+        (regex "\\(.+\\)::\s+\\(.+\\)"))
+    (while (looking-at regex)
+      (let ((key (match-string-no-properties 1))
+            (value (match-string-no-properties 2)))
+        (add-to-list 'property (cons key value)))
+      (forward-line 1)
+      (skip-chars-forward " \t\n"))
+    property))
+
+(defun logseq-markdown--parse-body ()
+  (let ((acc '(:mode text :ast nil))
+        (parsing t))
+    (while parsing
+      (setq acc (logseq-markdown--append-line-to-ast acc (logseq-markdown--scan-line)))
+      (forward-line 1)
+      (setq parsing (not (eobp))))
+    (plist-get acc :ast)))
+
+(defun logseq-markdown--scan-line ()
+  (let ((regex "\\(\t*\\)\\(-\\)?\\( *\\)\\(.*\\)"))
+    (looking-at regex)
+    (let ((tabs (length (match-string-no-properties 1)))
+          (prefix (string= "-" (match-string-no-properties 2)))
+          (spaces (length (match-string-no-properties 3)))
+          (text (match-string-no-properties 4)))
+      `(:tabs ,tabs :hasPrefix ,prefix :spaces ,spaces :text ,text))))
+
+(defun logseq-markdown--append-line-to-ast (acc line)
+  (let ((mode (plist-get acc :mode))
+        (ast (plist-get acc :ast)))
+    (cond
+     ((eq mode 'text)
+      (cond
+       ((logseq-markdown--parse-section line)
+        (setq ast (cons `(:type section :depth ,(plist-get line :tabs) :text (,(plist-get line :text))) ast)))
+
+       ((logseq-markdown--parse-src-begin line)
+        (setq mode 'src
+              ast (cons `(:type src :depth ,(plist-get line :tabs) :text (,(plist-get line :text))) ast)))
+
+       ((logseq-markdown--parse-quote-begin line)
+        (setq mode 'quote
+              ast (cons `(:type quote :depth ,(plist-get line :tabs)) ast)))
+
+       ((logseq-markdown--parse-table line)
+        (let* ((type (plist-get (car ast) :type))
+               (original-text (plist-get (car ast) :text))
+               (text (plist-get line :text)))
+          (if (eq type 'table)
+              (setf (plist-get (car ast) :text)
+                    (cons text original-text))
+            (setq ast (cons `(:type table :depth ,(plist-get line :tabs) :text (,text)) ast)))))
+
+       ((logseq-markdown--parse-text line)
+        (setq ast (cons `(:type text :depth ,(plist-get line :tabs) :text (,(plist-get line :text))) ast)))
+
+       ((logseq-markdown--parse-block-property line)
+        (let* ((properties (plist-get (car ast) :properties))
+               (text (plist-get line :text))
+               (key (match-string-no-properties 1 text))
+               (value (match-string-no-properties 2 text)))
+          (setf (plist-get (car ast) :properties)
+                (cons `(:key ,key :value ,value) properties))))
+
+       ((logseq-markdown--parse-continuous-text line)
+        (let* ((original-text (plist-get (car ast) :text))
+               (text (plist-get line :text)))
+          (setf (plist-get (car ast) :text)
+                (cons text original-text))))
+       ))
+
+     ((eq mode 'src)
+      (cond
+       ((logseq-markdown--parse-src-end line)
+        (setq mode 'text)
+        (let* ((original-text (plist-get (car ast) :text))
+               (text (plist-get line :text)))
+          (setf (plist-get (car ast) :text)
+                (cons text original-text))))
+
+       (t
+        (let* ((original-text (plist-get (car ast) :text))
+               (spaces (make-string (- (plist-get line :spaces) 2) ? ))
+               (text (concat spaces (plist-get line :text))))
+          (setf (plist-get (car ast) :text)
+                (cons text original-text))))
+       ))
+
+     ((eq mode 'quote)
+      (cond
+       ((logseq-markdown--parse-quote-end line)
+        (setq mode 'text))
+
+       (t
+        (let* ((original-text (plist-get (car ast) :text))
+               (text (plist-get line :text)))
+          (setf (plist-get (car ast) :text)
+                (cons text original-text))))
+       ))
+     )
+    `(:mode ,mode :ast ,ast)))
+
+(defun logseq-markdown--parse-section (line)
+  (and (plist-get line :hasPrefix)
+       (string-match-p "^#+ " (plist-get line :text))))
+
+(defun logseq-markdown--parse-block-property (line)
+  (and (not (plist-get line :hasPrefix))
+       (= 2 (plist-get line :spaces))
+       (string-match "^\\(.+\\)::\s+\\(.+\\)" (plist-get line :text))))
+
+(defun logseq-markdown--parse-text (line)
+  (plist-get line :hasPrefix))
+
+(defun logseq-markdown--parse-continuous-text (line)
+  (not (plist-get line :hasPrefix)))
+
+(defun logseq-markdown--parse-src-begin (line)
+  (string-match-p "^```[^`]*" (plist-get line :text)))
+
+(defun logseq-markdown--parse-src-end (line)
+  (string-match-p "^```$" (plist-get line :text)))
+
+(defun logseq-markdown--parse-quote-begin (line)
+  (string-match-p "^#\\+BEGIN_QUOTE" (plist-get line :text)))
+
+(defun logseq-markdown--parse-quote-end (line)
+  (string-match-p "^#\\+END_QUOTE" (plist-get line :text)))
+
+(defun logseq-markdown--parse-table (line)
+  (string-match-p "^|.+|" (plist-get line :text)))
+
+;; export
+
+(defun logseq-markdown--export-as-markdown (ast)
+  (let (type
+        (section-depth 0))
+    (dolist (node (nreverse ast))
+      (setq type (plist-get node :type))
+      (cond
+       ((eq type 'section)
+        (setq section-depth (1+ (plist-get node :depth)))
+        (dolist (line (nreverse (plist-get node :text)))
+          (insert line "\n")))
+
+       ((eq type 'text)
+        (let* ((depth (max 0 (- (plist-get node :depth) section-depth)))
+               (indent (make-string (* 2 depth) ? ))
+               (count 0))
+          (dolist (line (nreverse (plist-get node :text)))
+            (if (= count 0)
+                (if (seq-find (lambda (elm) (string= (plist-get elm :key) "logseq.order-list-type")) (plist-get node :properties))
+                    (insert indent "1. " line "\n")
+                  (insert indent "- " line "\n"))
+              (insert indent "  " line "\n"))
+            (setq count (1+ count)))))
+
+       ((eq type 'src)
+        (dolist (line (nreverse (plist-get node :text)))
+          (insert line "\n")))
+
+       ((eq type 'quote)
+        (dolist (line (nreverse (plist-get node :text)))
+          (insert "> " line "\n")))
+
+       ((eq type 'table)
+        (dolist (line (nreverse (plist-get node :text)))
+          (insert line "\n")))
+
+       ))))
+
+;; misc
+
+(defun logseq-markdown--remove-wiki-link ()
+  (save-excursion
+    (goto-char (point-min))
+    (while (re-search-forward "\\[\\[\\([^]]+\\)\\]\\]" nil t)
+      (replace-match (match-string 1)))))
+
+;;
 ;; outline-minor-mode
 ;;
 
@@ -224,7 +430,7 @@ See `imenu-create-index-function' and `imenu--index-alist' for details."
 ;; logseq-markdown-mode
 ;;
 
-(define-derived-mode logseq-markdown-mode markdown-mode "Logseq"
+(define-derived-mode logseq-markdown-mode markdown-mode "Logseq (MD)"
   "Edit Logseq journals and pages with Markdown"
   ;; Use TAB char instead of space
   (setq indent-tabs-mode t
