@@ -445,7 +445,7 @@ See `imenu-create-index-function' and `imenu--index-alist' for details."
 ;; key map
 ;;
 
-(let ((map logseq-mode-map))
+(let ((map logseq-markdown-mode-map))
   (define-key map "[" 'logseq-electric-open-blacket)
   (define-key map "\C-c\r"   'logseq-follow-page-at-point)
   (define-key map "\C-c\C-r" 'logseq-get-all-pages)
