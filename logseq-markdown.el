@@ -96,6 +96,24 @@
     (dolist (replace '(("/" . "___") (":" . "%3A")) acc)
       (setq acc (replace-regexp-in-string (car replace) (cdr replace) acc)))))
 
+(defun logseq--page-file-path (page-name)
+  (expand-file-name
+   (logseq--page-page-name-to-file-fullname page-name)
+   (logseq--page-directory)))
+
+;;
+;; Move
+;;
+
+(defun logseq-follow-page-at-point (&optional arg)
+  (interactive "P")
+  (if (markdown-wiki-link-p)
+      (logseq--follow-page (markdown-wiki-link-link) arg)
+    (user-error "Point is not at a Wiki Link")))
+
+(defun logseq--follow-page (page-name arg)
+  (find-file (logseq--page-file-path page-name)))
+
 ;;
 ;; Edit
 ;;
@@ -223,6 +241,7 @@ See `imenu-create-index-function' and `imenu--index-alist' for details."
 
 (let ((map logseq-mode-map))
   (define-key map "[" 'logseq-electric-open-blacket)
+  (define-key map "\C-c\r"   'logseq-follow-page-at-point)
   (define-key map "\C-c\C-r" 'logseq-get-all-pages)
 )
 
