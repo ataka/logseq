@@ -28,6 +28,22 @@
   (search-forward "\n\n" nil t))
 
 ;;
+;; Directory (Pages, Journals)
+;;
+
+(defvar logseq-directory "~/Logseq")
+(defvar logseq-current-graph (expand-file-name "main" logseq-directory))
+
+(defun logseq--page-directory ()
+  (expand-file-name "pages" logseq-current-graph))
+
+(defun logseq--journal-directory ()
+  (expand-file-name "journals" logseq-current-graph))
+
+(defun logseq--page-directory-files ()
+  (directory-files (logseq--page-directory) nil directory-files-no-dot-files-regexp))
+
+;;
 ;; Pages
 ;;
 
@@ -46,6 +62,54 @@
                                     (buffer-substring-no-properties (point) (point-max))))
                  (json-data (json-read-from-string (decode-coding-string raw-string 'utf-8))))
             (setq logseq-pages-result json-data))))))
+
+(defun logseq--pages ()
+  (seq-keep (lambda (page)
+              (when (eq (plist-get page :journal?) :json-false)
+                (plist-get page :originalName)))
+            logseq-pages-result))
+
+;; Page
+
+(defun logseq--page-names ()
+  (if logseq-pages-result
+      (logseq--pages)
+    (mapcar #'logseq--page-file-fullname-to-page-name
+            (logseq--page-directory-files))))
+
+(defun logseq--page-file-fullname-to-page-name (file-fullname)
+  (logseq--convert-file-name-to-page-name
+   (file-name-sans-extension file-fullname)))
+
+(defun logseq--page-page-name-to-file-fullname (page-name)
+  (file-name-with-extension
+   (logseq--convert-page-name-to-file-name page-name) 
+   "md"))
+
+(defun logseq--convert-file-name-to-page-name (file-name)
+  (let ((acc file-name))
+    (dolist (replace '(("___" . "/") ("%3A" . ":")) acc)
+      (setq acc (replace-regexp-in-string (car replace) (cdr replace) acc)))))
+
+(defun logseq--convert-page-name-to-file-name (page-name)
+  (let ((acc page-name))
+    (dolist (replace '(("/" . "___") (":" . "%3A")) acc)
+      (setq acc (replace-regexp-in-string (car replace) (cdr replace) acc)))))
+
+;;
+;; Edit
+;;
+
+(defun logseq-markdown-electric-open-blacket (arg)
+  (interactive "*P")
+  (self-insert-command (prefix-numeric-value arg))
+  (when (looking-back "\\[\\[")
+      (replace-match "")
+      (call-interactively #'logseq-markdown--insert-page-link)))
+
+(defun logseq-markdown--insert-page-link (page-name)
+  (interactive (list (completing-read "Page: " (logseq--page-names))))
+  (insert (format "[[%s]]" page-name)))
 
 ;;
 ;; outline-minor-mode
@@ -158,6 +222,7 @@ See `imenu-create-index-function' and `imenu--index-alist' for details."
 ;;
 
 (let ((map logseq-mode-map))
+  (define-key map "[" 'logseq-electric-open-blacket)
   (define-key map "\C-c\C-r" 'logseq-get-all-pages)
 )
 
