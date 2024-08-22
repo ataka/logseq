@@ -326,6 +326,9 @@
     (while (re-search-forward "\\[\\[\\([^]]+\\)\\]\\]" nil t)
       (replace-match (match-string 1)))))
 
+(defun logseq--remove-wiki-link-in-string (str)
+  (replace-regexp-in-string "\\[\\[\\(.+\\)\\]\\]" "\\1" str))
+
 ;;
 ;; outline-minor-mode
 ;;
