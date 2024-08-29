@@ -85,6 +85,24 @@
   (logseq-find-file page
                     (logseq-page-file graph (logseq-validate-file page))))
 
+;; convenience
+
+(defun logseq-convert-words-to-lower-camel-case (beg end)
+  (interactive "r")
+  (goto-char end)
+  (while (re-search-backward "\\b[a-z]" (1+ beg) t)
+    (capitalize-region (point) (1+ (point)))
+    (goto-char (1- (point)))
+    (delete-horizontal-space)))
+
+(defun logseq-convert-words-to-upper-camel-case ()
+  (interactive "r")
+  (goto-char end)
+  (while (re-search-backward "\\b[a-z]" beg t)
+    (capitalize-region (point) (1+ (point)))
+    (goto-char (1- (point)))
+    (delete-horizontal-space)))
+
 ;; Local tests
 
 ;; (logseq-make-graph-alist logseq-home-dir)
