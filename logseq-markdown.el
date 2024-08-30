@@ -338,12 +338,96 @@
 (defun logseq-markdown-outline-level ()
   (1- (length (match-string-no-properties 0))))
 
+
+;;; Syntax  ==================================================================
+
+(defun logseq-markdown-syntax-propertize-extend-region (start end)
+  "Extend START to END region to include an entire block of text.
+This helps improve syntax analysis for block constructs.
+Returns a cons (NEW-START . NEW-END) or nil if no adjustment should be made.
+Function is called repeatedly until it returns nil. For details, see
+`syntax-propertize-extend-region-functions'."
+  (save-match-data
+    (save-excursion
+      (let* ((new-start (progn (goto-char start)
+                               (skip-chars-forward "\n")
+                               (if (re-search-backward "\n\n" nil t)
+                                   (min start (match-end 0))
+                                 (point-min))))
+             (new-end (progn (goto-char end)
+                             (skip-chars-backward "\n")
+                             (if (re-search-forward "\n\n" nil t)
+                                 (max end (match-beginning 0))
+                               (point-max))))
+             (code-match (markdown-code-block-at-pos new-start))
+             ;; FIXME: The `code-match' can return bogus values
+             ;; when text has been inserted/deleted!
+             (new-start (min (or (and code-match (cl-first code-match))
+                                 (point-max))
+                             new-start))
+             (code-match (and (< end (point-max))
+                              (markdown-code-block-at-pos end)))
+             (new-end (max (or (and code-match (cl-second code-match)) 0)
+                           new-end)))
+
+        (unless (and (eq new-start start) (eq new-end end))
+          (cons new-start (min new-end (point-max))))))))
+
+(defun logseq-markdown-font-lock-extend-region-function (start end _)
+  "Used in `jit-lock-after-change-extend-region-functions'.
+Delegates to `logseq-markdown-syntax-propertize-extend-region'. START
+and END are the previous region to refontify."
+  (let ((res (logseq-markdown-syntax-propertize-extend-region start end)))
+    (when res
+      ;; syntax-propertize-function is not called when character at
+      ;; (point-max) is deleted, but font-lock-extend-region-functions
+      ;; are called.  Force a syntax property update in that case.
+      (when (= end (point-max))
+        ;; This function is called in a buffer modification hook.
+        ;; `markdown-syntax-propertize' doesn't save the match data,
+        ;; so we have to do it here.
+        (save-match-data
+          (logseq-markdown-syntax-propertize (car res) (cdr res))))
+      (setq jit-lock-start (car res)
+            jit-lock-end (cdr res)))))
+
+(defun logseq-markdown-syntax-propertize-headings (start end)
+  "Match headings of type SYMBOL with REGEX from START to END."
+  (goto-char start)
+  (while (re-search-forward logseq-markdown-regex-header end t)
+    (unless (markdown-code-block-at-pos (match-beginning 0))
+      (put-text-property
+       (match-beginning 0) (match-end 0) 'markdown-heading
+       (match-data t))
+      (put-text-property
+       (match-beginning 0) (match-end 0)
+       (cond ((match-string-no-properties 2) 'markdown-heading-1-setext)
+             ((match-string-no-properties 3) 'markdown-heading-2-setext)
+             (t (let ((atx-level (length (markdown-trim-whitespace
+                                          (match-string-no-properties 4)))))
+                  (intern (format "markdown-heading-%d-atx" atx-level)))))
+       (match-data t)))))
+
+(defun logseq-markdown-syntax-propertize (start end)
+  "Function used as `syntax-propertize-function'.
+START and END delimit region to propertize."
+  (with-silent-modifications
+    (save-excursion
+      (remove-text-properties start end markdown--syntax-properties)
+      (markdown-syntax-propertize-fenced-block-constructs start end)
+      (markdown-syntax-propertize-list-items start end)
+      (markdown-syntax-propertize-pre-blocks start end)
+      (markdown-syntax-propertize-blockquotes start end)
+      (logseq-markdown-syntax-propertize-headings start end)
+      (markdown-syntax-propertize-hrs start end)
+      (markdown-syntax-propertize-comments start end))))
+
 ;;
 ;; imenu
 ;;
 
 (defconst logseq-markdown-regex-header
-  "^\\(?:\\(?1:[^\r\n\t -].*\\)\n\\(?:\\(?2:=+\\)\\|\\(?3:-+\\)\\)\\|\t*- \\(?4:#+[ \t]+\\)\\(?5:.*?\\)\\(?6:[ \t]*#*\\)\\)$"
+  "^\\(?:\\(?1:[^\r\n\t -].*\\)\n\\(?:\\(?2:=+\\)\\|\\(?3:-+\\)\\)\\|\t*- \\(?4:#+[ \t]+\\)\\(?5:.*?\\)\\(?6:[ \t]*#*\\)?\\)$"
   "Regexp identifying Markdown headings.
 Group 1 matches the text of a setext heading.
 Group 2 matches the underline of a level-1 setext heading.
@@ -351,6 +435,11 @@ Group 3 matches the underline of a level-2 setext heading.
 Group 4 matches the opening hash marks of an atx heading and whitespace.
 Group 5 matches the text, without surrounding whitespace, of an atx heading.
 Group 6 matches the closing whitespace and hash marks of an atx heading.")
+
+(defconst logseq-markdown-regex-header-atx
+  "^\t*- \\(#+\\)[ \t]+\\(.*?\\)[ \t]*\\(#*\\)$"
+  "Regular expression for generic atx-style (hash mark) headers.")
+
 
 (defun logseq-markdown-imenu-create-nested-index ()
   "Create and return a nested imenu index alist for the current buffer.
@@ -429,6 +518,14 @@ See `imenu-create-index-function' and `imenu--index-alist' for details."
   ;; Use TAB char instead of space
   (setq indent-tabs-mode t
         tab-width 4)
+  ;; Syntax
+  (add-hook 'syntax-propertize-extend-region-functions
+            #'logseq-markdown-syntax-propertize-extend-region nil t)
+  (add-hook 'jit-lock-after-change-extend-region-functions
+            #'logseq-markdown-font-lock-extend-region-function t t)
+  (setq-local syntax-propertize-function #'logseq-markdown-syntax-propertize)
+  (syntax-propertize (point-max)) ;; Propertize before hooks run, etc.
+  ;; ?
   (setq-local outline-regexp logseq-markdown-outline-regexp)
   (setq-local outline-level #'logseq-markdown-outline-level)
   (markdown-toggle-wiki-links t)
