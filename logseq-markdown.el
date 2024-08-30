@@ -77,6 +77,15 @@ Groups need to agree with `markdown-regex-tilde-fence-begin'.")
 Group 1 matches the closing three backquotes.
 Group 2 matches any whitespace and the final newline.")
 
+(defconst logseq-markdown-regex-property-metadata
+  "^[ \t]*\\(?:-[ \t]*\\)?\\([[:alpha:]][[:alpha:] _-]*?\\)\\(::[ \t]*\\)\\(.*\\)$")
+
+(defconst logseq-markdown-regex-page-property-metadata
+  "^\\([^:_ ]+\\)\\(:: \\)\\(.*\\)$")
+
+(defconst logseq-markdown-regex-block-property-metadata
+  "^\t*  \\([^:_ ]+\\)\\(:: \\)\\(.*\\)$")
+
 
 ;;; Syntax ====================================================================
 
@@ -183,6 +192,157 @@ START and END delimit region to propertize."
       (logseq-markdown-syntax-propertize-headings start end)
       (markdown-syntax-propertize-hrs start end)
       (markdown-syntax-propertize-comments start end))))
+
+
+;;; Font Lock =================================================================
+
+(defvar logseq-markdown-mode-font-lock-keywords
+;(setq logseq-markdown-mode-font-lock-keywords
+  `(
+    ;; (markdown-match-yaml-metadata-begin . ((1 'markdown-markup-face)))
+    ;; (markdown-match-yaml-metadata-end . ((1 'markdown-markup-face)))
+    ;; (markdown-match-yaml-metadata-key . ((1 'markdown-metadata-key-face)
+    ;;                                      (2 'markdown-markup-face)
+    ;;                                      (3 'markdown-metadata-value-face)))
+    (markdown-match-gfm-open-code-blocks . ((1 markdown-markup-properties)
+                                            (2 markdown-markup-properties nil t)
+                                            (3 markdown-language-keyword-properties nil t)
+                                            (4 markdown-language-info-properties nil t)
+                                            (5 markdown-markup-properties nil t)))
+    (markdown-match-gfm-close-code-blocks . ((0 markdown-markup-properties)))
+    (markdown-fontify-gfm-code-blocks)
+    (markdown-fontify-tables)
+    (markdown-match-fenced-start-code-block . ((1 markdown-markup-properties)
+                                               (2 markdown-markup-properties nil t)
+                                               (3 markdown-language-keyword-properties nil t)
+                                               (4 markdown-language-info-properties nil t)
+                                               (5 markdown-markup-properties nil t)))
+    (markdown-match-fenced-end-code-block . ((0 markdown-markup-properties)))
+    (markdown-fontify-fenced-code-blocks)
+    (markdown-match-pre-blocks . ((0 'markdown-pre-face)))
+    (markdown-fontify-headings)
+    ;; (markdown-match-declarative-metadata . ((1 'markdown-metadata-key-face)
+    ;;                                         (2 'markdown-markup-face)
+    ;;                                         (3 'markdown-metadata-value-face)))
+    ;; (markdown-match-pandoc-metadata . ((1 'markdown-markup-face)
+    ;;                                    (2 'markdown-markup-face)
+    ;;                                    (3 'markdown-metadata-value-face)))
+    (logseq-markdown-match-property-metadata . ((1 'markdown-metadata-key-face)
+                                                (2 'markdown-markup-face)
+                                                (3 'markdown-metadata-value-face)))
+    (markdown-fontify-hrs)
+    (markdown-match-code . ((1 markdown-markup-properties prepend)
+                            (2 'markdown-inline-code-face prepend)
+                            (3 markdown-markup-properties prepend)))
+    (,markdown-regex-kbd . ((1 markdown-markup-properties)
+                            (2 'markdown-inline-code-face)
+                            (3 markdown-markup-properties)))
+    (markdown-fontify-angle-uris)
+    (,markdown-regex-email . 'markdown-plain-url-face)
+    (markdown-match-html-tag . ((1 'markdown-html-tag-delimiter-face t)
+                                (2 'markdown-html-tag-name-face t)
+                                (3 'markdown-html-tag-delimiter-face t)
+                                ;; Anchored matcher for HTML tag attributes
+                                (,markdown-regex-html-attr
+                                 ;; Before searching, move past tag
+                                 ;; name; set limit at tag close.
+                                 (progn
+                                   (goto-char (match-end 2)) (match-end 3))
+                                 nil
+                                 . ((1 'markdown-html-attr-name-face)
+                                    (3 'markdown-html-tag-delimiter-face nil t)
+                                    (4 'markdown-html-attr-value-face nil t)))))
+    (,markdown-regex-html-entity . 'markdown-html-entity-face)
+    (markdown-fontify-list-items)
+    (,markdown-regex-footnote . ((1 markdown-markup-properties)    ; [^
+                                 (2 (markdown--footnote-marker-properties)) ; label
+                                 (3 markdown-markup-properties)))  ; ]
+    (,markdown-regex-pandoc-inline-footnote . ((1 markdown-markup-properties)   ; ^
+                                               (2 markdown-markup-properties)   ; [
+                                               (3 (markdown--pandoc-inline-footnote-properties)) ; text
+                                               (4 markdown-markup-properties))) ; ]
+    (markdown-match-includes . ((1 markdown-markup-properties)
+                                (2 markdown-markup-properties nil t)
+                                (3 markdown-include-title-properties nil t)
+                                (4 markdown-markup-properties nil t)
+                                (5 markdown-markup-properties)
+                                (6 'markdown-url-face)
+                                (7 markdown-markup-properties)))
+    (markdown-fontify-inline-links)
+    (markdown-fontify-reference-links)
+    (,markdown-regex-reference-definition . ((1 'markdown-markup-face) ; [
+                                             (2 'markdown-reference-face) ; label
+                                             (3 'markdown-markup-face)    ; ]
+                                             (4 'markdown-markup-face)    ; :
+                                             (5 'markdown-url-face)       ; url
+                                             (6 'markdown-link-title-face))) ; "title" (optional)
+    (markdown-fontify-plain-uris)
+    ;; Math mode $..$
+    (markdown-match-math-single . ((1 'markdown-markup-face prepend)
+                                   (2 'markdown-math-face append)
+                                   (3 'markdown-markup-face prepend)))
+    ;; Math mode $$..$$
+    (markdown-match-math-double . ((1 'markdown-markup-face prepend)
+                                   (2 'markdown-math-face append)
+                                   (3 'markdown-markup-face prepend)))
+    ;; Math mode \[..\] and \\[..\\]
+    (markdown-match-math-display . ((1 'markdown-markup-face prepend)
+                                    (3 'markdown-math-face append)
+                                    (4 'markdown-markup-face prepend)))
+    (markdown-match-bold . ((1 markdown-markup-properties prepend)
+                            (2 'markdown-bold-face append)
+                            (3 markdown-markup-properties prepend)))
+    (markdown-match-italic . ((1 markdown-markup-properties prepend)
+                              (2 'markdown-italic-face append)
+                              (3 markdown-markup-properties prepend)))
+    (,markdown-regex-strike-through . ((3 markdown-markup-properties)
+                                       (4 'markdown-strike-through-face)
+                                       (5 markdown-markup-properties)))
+    (markdown--match-highlighting . ((3 markdown-markup-properties)
+                                     (4 'markdown-highlighting-face)
+                                     (5 markdown-markup-properties)))
+    (,markdown-regex-line-break . (1 markdown-line-break-properties prepend))
+    (markdown-match-escape . ((1 markdown-markup-properties prepend)))
+    (markdown-fontify-sub-superscripts)
+    (markdown-match-inline-attributes . ((0 markdown-markup-properties prepend)))
+    (markdown-match-leanpub-sections . ((0 markdown-markup-properties)))
+    (markdown-fontify-blockquotes)
+    (markdown-match-wiki-link . ((0 'markdown-link-face prepend))))
+  "Syntax highlighting for Logseq Markdown files.")
+
+(defun logseq-markdown-match-generic-metadata (regexp last)
+  "Match metadata declarations specified by REGEXP from point to LAST.
+These declarations must appear inside a metadata block that begins at
+the beginning of the buffer and ends with a blank line (or the end of
+the buffer)."
+  (let* ((first (point))
+         (end-re "\\'")
+         (block-begin (goto-char 1))
+         (block-end (point-max)))
+    ;; If a block was found that begins before LAST and ends after
+    ;; point, search for declarations inside it.  If the starting is
+    ;; before the beginning of the block, start there. Otherwise,
+    ;; move back to FIRST.
+    (goto-char (if (< first block-begin) block-begin first))
+    (if (re-search-forward regexp (min last block-end) t)
+        ;; If a metadata declaration is found, set match-data and return t.
+        (let ((key-beginning (match-beginning 1))
+              (key-end (match-end 1))
+              (markup-begin (match-beginning 2))
+              (markup-end (match-end 2))
+              (value-beginning (match-beginning 3)))
+          (set-match-data (list key-beginning (point) ; complete metadata
+                                key-beginning key-end ; key
+                                markup-begin markup-end     ; markup
+                                value-beginning (point)))   ; value
+          t)
+      ;; Otherwise, move the point to last and return nil
+      (goto-char last)
+      nil)))
+
+(defun logseq-markdown-match-property-metadata (last)
+  "Match property metadata from the point to LAST."
+  (logseq-markdown-match-generic-metadata logseq-markdown-regex-property-metadata last))
 
 ;;
 ;; Logseq HTTP Server
@@ -599,6 +759,15 @@ See `imenu-create-index-function' and `imenu--index-alist' for details."
             #'logseq-markdown-font-lock-extend-region-function t t)
   (setq-local syntax-propertize-function #'logseq-markdown-syntax-propertize)
   (syntax-propertize (point-max)) ;; Propertize before hooks run, etc.
+  ;; Font lock.
+  (setq font-lock-defaults
+        '(logseq-markdown-mode-font-lock-keywords
+          nil nil nil nil
+          (font-lock-multiline . t)
+          (font-lock-syntactic-face-function . markdown-syntactic-face)
+          (font-lock-extra-managed-props
+           . (composition display invisible rear-nonsticky
+                          keymap help-echo mouse-face))))
   ;; ?
   (setq-local outline-regexp logseq-markdown-outline-regexp)
   (setq-local outline-level #'logseq-markdown-outline-level)
