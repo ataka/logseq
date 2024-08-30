@@ -151,7 +151,7 @@
     (while (looking-at regex)
       (let ((key (match-string-no-properties 1))
             (value (match-string-no-properties 2)))
-        (add-to-list 'property (cons key value)))
+        (push (cons key value) property))
       (forward-line 1)
       (skip-chars-forward " \t\n"))
     property))
