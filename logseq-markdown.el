@@ -1,14 +1,192 @@
 ;;; -*- lexical-binding: t -*-
+
 ;; Author: Masayuki Ataka <masayuki.ataka@gmail.com>
-;;
+
+;; This file is not part of GNU Emacs.
+
+;; This program is free software; you can redistribute it and/or modify
+;; it under the terms of the GNU General Public License as published by
+;; the Free Software Foundation, either version 3 of the License, or
+;; (at your option) any later version.
+
+;; This program is distributed in the hope that it will be useful,
+;; but WITHOUT ANY WARRANTY; without even the implied warranty of
+;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+;; GNU General Public License for more details.
+
+;; You should have received a copy of the GNU General Public License
+;; along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+;;; Commentary:
+
+;; See the README.md file for details.
+
+
+;;; Code:
 
 (require 'seq)
+
+
+;;; Constants =================================================================
+
+(defconst logseq-markdown-mode-version "0.1"
+  "Logseq markdown mode version number.")
+
+
+;;; Global Variables ==========================================================
+
+(defvar logseq-pages-result nil)
+
+
+;;; Customizable Variables ====================================================
+
+(defvar logseq-token nil)
+(defvar logseq-directory "~/Logseq")
+(defvar logseq-current-graph (expand-file-name "main" logseq-directory))
+
+
+;;; Regular Expressions =======================================================
+
+(defconst logseq-markdown-regex-header
+  "^\\(?:\\(?1:[^\r\n\t -].*\\)\n\\(?:\\(?2:=+\\)\\|\\(?3:-+\\)\\)\\|\t*- \\(?4:#+[ \t]+\\)\\(?5:.*?\\)\\(?6:[ \t]*#*\\)?\\)$"
+  "Regexp identifying Markdown headings.
+Group 1 matches the text of a setext heading.
+Group 2 matches the underline of a level-1 setext heading.
+Group 3 matches the underline of a level-2 setext heading.
+Group 4 matches the opening hash marks of an atx heading and whitespace.
+Group 5 matches the text, without surrounding whitespace, of an atx heading.
+Group 6 matches the closing whitespace and hash marks of an atx heading.")
+
+(defconst logseq-markdown-regex-header-atx
+  "^\t*- \\(#+\\)[ \t]+\\(.*?\\)[ \t]*\\(#*\\)$"
+  "Regular expression for generic atx-style (hash mark) headers.")
+
+(defconst logseq-markdown-regex-gfm-code-block-open
+  "^[[:blank:]]*\\(- \\)?\\(?1:```\\)\\(?2:[[:blank:]]*{?[[:blank:]]*\\)\\(?3:[^`[:space:]]+?\\)?\\(?:[[:blank:]]+\\(?4:.+?\\)\\)?\\(?5:[[:blank:]]*}?[[:blank:]]*\\)$"
+  "Regular expression matching opening of GFM code blocks.
+Group 1 matches the opening three backquotes and any following whitespace.
+Group 2 matches the opening brace (optional) and surrounding whitespace.
+Group 3 matches the language identifier (optional).
+Group 4 matches the info string (optional).
+Group 5 matches the closing brace (optional), whitespace, and newline.
+Groups need to agree with `markdown-regex-tilde-fence-begin'.")
+
+(defconst logseq-markdown-regex-gfm-code-block-close
+  "^[[:blank:]]*\\(?1:```\\)\\(?2:\\s *?\\)$"
+  "Regular expression matching closing of GFM code blocks.
+Group 1 matches the closing three backquotes.
+Group 2 matches any whitespace and the final newline.")
+
+
+;;; Syntax ====================================================================
+
+(defvar logseq-markdown--syntax-properties
+  (list 'markdown-tilde-fence-begin nil
+        'markdown-tilde-fence-end nil
+        'markdown-fenced-code nil
+        'markdown-yaml-metadata-begin nil
+        'markdown-yaml-metadata-end nil
+        'markdown-yaml-metadata-section nil
+        'markdown-gfm-block-begin nil
+        'markdown-gfm-block-end nil
+        'markdown-gfm-code nil
+        'markdown-list-item nil
+        'markdown-pre nil
+        'markdown-blockquote nil
+        'markdown-hr nil
+        'markdown-comment nil
+        'markdown-heading nil
+        'markdown-heading-1-setext nil
+        'markdown-heading-2-setext nil
+        'markdown-heading-1-atx nil
+        'markdown-heading-2-atx nil
+        'markdown-heading-3-atx nil
+        'markdown-heading-4-atx nil
+        'markdown-heading-5-atx nil
+        'markdown-heading-6-atx nil
+        'markdown-metadata-key nil
+        'markdown-metadata-value nil
+        'markdown-metadata-markup nil)
+  "Property list of all Logseq Markdown syntactic properties.")
+
+(defvar logseq-markdown-literal-faces
+  '(markdown-code-face
+    markdown-inline-code-face
+    markdown-pre-face
+    markdown-math-face
+    markdown-url-face
+    markdown-plain-url-face
+    markdown-language-keyword-face
+    markdown-language-info-face
+    markdown-metadata-key-face
+    markdown-metadata-value-face
+    markdown-html-entity-face
+    markdown-html-tag-name-face
+    markdown-html-tag-delimiter-face
+    markdown-html-attr-name-face
+    markdown-html-attr-value-face
+    markdown-reference-face
+    markdown-footnote-marker-face
+    markdown-line-break-face
+    markdown-comment-face)
+  "A list of logseq-markdown-mode faces that contain literal text.
+Literal text treats backslashes literally, rather than as an
+escape character (see `markdown-match-escape').")
+
+(defalias 'logseq-markdown-syntax-propertize-extend-region 'markdown-syntax-propertize-extend-region)
+
+(defun logseq-markdown-font-lock-extend-region-function (start end _)
+  "Used in `jit-lock-after-change-extend-region-functions'.
+Delegates to `logseq-markdown-syntax-propertize-extend-region'. START
+and END are the previous region to refontify."
+  (let ((res (logseq-markdown-syntax-propertize-extend-region start end)))
+    (when res
+      ;; syntax-propertize-function is not called when character at
+      ;; (point-max) is deleted, but font-lock-extend-region-functions
+      ;; are called.  Force a syntax property update in that case.
+      (when (= end (point-max))
+        ;; This function is called in a buffer modification hook.
+        ;; `markdown-syntax-propertize' doesn't save the match data,
+        ;; so we have to do it here.
+        (save-match-data
+          (logseq-markdown-syntax-propertize (car res) (cdr res))))
+      (setq jit-lock-start (car res)
+            jit-lock-end (cdr res)))))
+
+(defun logseq-markdown-syntax-propertize-headings (start end)
+  "Match headings of type SYMBOL with REGEX from START to END."
+  (goto-char start)
+  (while (re-search-forward logseq-markdown-regex-header end t)
+    (unless (markdown-code-block-at-pos (match-beginning 0))
+      (put-text-property
+       (match-beginning 0) (match-end 0) 'markdown-heading
+       (match-data t))
+      (put-text-property
+       (match-beginning 0) (match-end 0)
+       (cond ((match-string-no-properties 2) 'markdown-heading-1-setext)
+             ((match-string-no-properties 3) 'markdown-heading-2-setext)
+             (t (let ((atx-level (length (markdown-trim-whitespace
+                                          (match-string-no-properties 4)))))
+                  (intern (format "markdown-heading-%d-atx" atx-level)))))
+       (match-data t)))))
+
+(defun logseq-markdown-syntax-propertize (start end)
+  "Function used as `syntax-propertize-function'.
+START and END delimit region to propertize."
+  (with-silent-modifications
+    (save-excursion
+      (remove-text-properties start end logseq-markdown--syntax-properties)
+      (markdown-syntax-propertize-fenced-block-constructs start end)
+      (markdown-syntax-propertize-list-items start end)
+      (markdown-syntax-propertize-pre-blocks start end)
+      (markdown-syntax-propertize-blockquotes start end)
+      (logseq-markdown-syntax-propertize-headings start end)
+      (markdown-syntax-propertize-hrs start end)
+      (markdown-syntax-propertize-comments start end))))
 
 ;;
 ;; Logseq HTTP Server
 ;;
-
-(defvar logseq-token nil)
 
 (defmacro logseq--post-to-http-server (parameters callback)
   `(let ((url-request-method "POST")
@@ -24,9 +202,6 @@
 ;; Directory (Pages, Journals)
 ;;
 
-(defvar logseq-directory "~/Logseq")
-(defvar logseq-current-graph (expand-file-name "main" logseq-directory))
-
 (defun logseq--page-directory ()
   (expand-file-name "pages" logseq-current-graph))
 
@@ -39,8 +214,6 @@
 ;;
 ;; Pages
 ;;
-
-(defvar logseq-pages-result nil)
 
 (defun logseq-get-all-pages ()
   (interactive)
@@ -338,108 +511,9 @@
 (defun logseq-markdown-outline-level ()
   (1- (length (match-string-no-properties 0))))
 
-
-;;; Syntax  ==================================================================
-
-(defun logseq-markdown-syntax-propertize-extend-region (start end)
-  "Extend START to END region to include an entire block of text.
-This helps improve syntax analysis for block constructs.
-Returns a cons (NEW-START . NEW-END) or nil if no adjustment should be made.
-Function is called repeatedly until it returns nil. For details, see
-`syntax-propertize-extend-region-functions'."
-  (save-match-data
-    (save-excursion
-      (let* ((new-start (progn (goto-char start)
-                               (skip-chars-forward "\n")
-                               (if (re-search-backward "\n\n" nil t)
-                                   (min start (match-end 0))
-                                 (point-min))))
-             (new-end (progn (goto-char end)
-                             (skip-chars-backward "\n")
-                             (if (re-search-forward "\n\n" nil t)
-                                 (max end (match-beginning 0))
-                               (point-max))))
-             (code-match (markdown-code-block-at-pos new-start))
-             ;; FIXME: The `code-match' can return bogus values
-             ;; when text has been inserted/deleted!
-             (new-start (min (or (and code-match (cl-first code-match))
-                                 (point-max))
-                             new-start))
-             (code-match (and (< end (point-max))
-                              (markdown-code-block-at-pos end)))
-             (new-end (max (or (and code-match (cl-second code-match)) 0)
-                           new-end)))
-
-        (unless (and (eq new-start start) (eq new-end end))
-          (cons new-start (min new-end (point-max))))))))
-
-(defun logseq-markdown-font-lock-extend-region-function (start end _)
-  "Used in `jit-lock-after-change-extend-region-functions'.
-Delegates to `logseq-markdown-syntax-propertize-extend-region'. START
-and END are the previous region to refontify."
-  (let ((res (logseq-markdown-syntax-propertize-extend-region start end)))
-    (when res
-      ;; syntax-propertize-function is not called when character at
-      ;; (point-max) is deleted, but font-lock-extend-region-functions
-      ;; are called.  Force a syntax property update in that case.
-      (when (= end (point-max))
-        ;; This function is called in a buffer modification hook.
-        ;; `markdown-syntax-propertize' doesn't save the match data,
-        ;; so we have to do it here.
-        (save-match-data
-          (logseq-markdown-syntax-propertize (car res) (cdr res))))
-      (setq jit-lock-start (car res)
-            jit-lock-end (cdr res)))))
-
-(defun logseq-markdown-syntax-propertize-headings (start end)
-  "Match headings of type SYMBOL with REGEX from START to END."
-  (goto-char start)
-  (while (re-search-forward logseq-markdown-regex-header end t)
-    (unless (markdown-code-block-at-pos (match-beginning 0))
-      (put-text-property
-       (match-beginning 0) (match-end 0) 'markdown-heading
-       (match-data t))
-      (put-text-property
-       (match-beginning 0) (match-end 0)
-       (cond ((match-string-no-properties 2) 'markdown-heading-1-setext)
-             ((match-string-no-properties 3) 'markdown-heading-2-setext)
-             (t (let ((atx-level (length (markdown-trim-whitespace
-                                          (match-string-no-properties 4)))))
-                  (intern (format "markdown-heading-%d-atx" atx-level)))))
-       (match-data t)))))
-
-(defun logseq-markdown-syntax-propertize (start end)
-  "Function used as `syntax-propertize-function'.
-START and END delimit region to propertize."
-  (with-silent-modifications
-    (save-excursion
-      (remove-text-properties start end markdown--syntax-properties)
-      (markdown-syntax-propertize-fenced-block-constructs start end)
-      (markdown-syntax-propertize-list-items start end)
-      (markdown-syntax-propertize-pre-blocks start end)
-      (markdown-syntax-propertize-blockquotes start end)
-      (logseq-markdown-syntax-propertize-headings start end)
-      (markdown-syntax-propertize-hrs start end)
-      (markdown-syntax-propertize-comments start end))))
-
 ;;
 ;; imenu
 ;;
-
-(defconst logseq-markdown-regex-header
-  "^\\(?:\\(?1:[^\r\n\t -].*\\)\n\\(?:\\(?2:=+\\)\\|\\(?3:-+\\)\\)\\|\t*- \\(?4:#+[ \t]+\\)\\(?5:.*?\\)\\(?6:[ \t]*#*\\)?\\)$"
-  "Regexp identifying Markdown headings.
-Group 1 matches the text of a setext heading.
-Group 2 matches the underline of a level-1 setext heading.
-Group 3 matches the underline of a level-2 setext heading.
-Group 4 matches the opening hash marks of an atx heading and whitespace.
-Group 5 matches the text, without surrounding whitespace, of an atx heading.
-Group 6 matches the closing whitespace and hash marks of an atx heading.")
-
-(defconst logseq-markdown-regex-header-atx
-  "^\t*- \\(#+\\)[ \t]+\\(.*?\\)[ \t]*\\(#*\\)$"
-  "Regular expression for generic atx-style (hash mark) headers.")
-
 
 (defun logseq-markdown-imenu-create-nested-index ()
   "Create and return a nested imenu index alist for the current buffer.
