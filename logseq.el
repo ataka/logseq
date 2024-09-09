@@ -409,9 +409,12 @@ the buffer)."
    (file-name-sans-extension file-fullname)))
 
 (defun logseq--page-page-name-to-file-fullname (page-name)
-  (file-name-with-extension
+  ;; Do not use `file-name-with-extension` because _this function removes any existing
+  ;; extension from `FILENAME`_, which leads `(file-name-with-extension "Eva 1.0" "md")`
+  ;; to return not `"Eva 1.0.md"` but `"Eva 1.md"`.
+  (concat
    (logseq--convert-page-name-to-file-name page-name) 
-   "md"))
+   ".md"))
 
 (defun logseq--convert-file-name-to-page-name (file-name)
   (let ((acc file-name))
