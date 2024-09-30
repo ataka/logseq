@@ -473,6 +473,70 @@ the buffer)."
         (insert "\n" tabs "-" spaces)
       (insert "\n" tabs spaces))))
 
+(defun logseq-markdown-indent-block ()
+  (interactive)
+  (let* ((line (save-excursion
+                 (forward-line 0)
+                 (logseq-markdown--scan-line)))
+         (hasPrefix   (plist-get line :hasPrefix))
+         (tabs-length (plist-get line :tabs))
+         (tabs (make-string tabs-length ?\t))
+         (beg (save-excursion
+                (forward-line 0)
+                (point)))
+         (end (save-excursion
+                ;; (re-search-forward (concat "^" tabs "- ") nil t)
+                (while (< tabs-length (progn
+                                        (re-search-forward "^\t*- " nil t)
+                                        (forward-line 0)
+                                        (plist-get (logseq-markdown--scan-line) :tabs)))
+                  (end-of-line))
+                (forward-line 0)
+                (point))))
+    (if hasPrefix
+        (save-excursion
+          (save-restriction
+            (narrow-to-region beg end)
+            (goto-char end)
+            (forward-line -1)
+            (while (< beg (point))
+              (insert "\t")
+              (forward-line -1))
+            (insert "\t")))
+      (message "Call this function in the first line of the block"))))
+
+(defun logseq-markdown-outdent-block ()
+  (interactive)
+  (let* ((line (save-excursion
+                 (forward-line 0)
+                 (logseq-markdown--scan-line)))
+         (hasPrefix   (plist-get line :hasPrefix))
+         (tabs-length (plist-get line :tabs))
+         (tabs (make-string tabs-length ?\t))
+         (beg (save-excursion
+                (forward-line 0)
+                (point)))
+         (end (save-excursion
+                ;; (re-search-forward (concat "^" tabs "- ") nil t)
+                (while (< tabs-length (progn
+                                        (re-search-forward "^\t*- " nil t)
+                                        (forward-line 0)
+                                        (plist-get (logseq-markdown--scan-line) :tabs)))
+                  (end-of-line))
+                (forward-line 0)
+                (point))))
+    (if hasPrefix
+        (save-excursion
+          (save-restriction
+            (narrow-to-region beg end)
+            (goto-char end)
+            (forward-line -1)
+            (while (< beg (point))
+              (delete-char 1)
+              (forward-line -1))
+            (delete-char 1)))
+      (message "Call this function in the first line of the block"))))
+
 ;;
 ;; Export
 ;;
@@ -820,6 +884,8 @@ See `imenu-create-index-function' and `imenu--index-alist' for details."
   (define-key map "\r" 'logseq-markdown-indent-and-new-line)
   (define-key map "\C-c\r"   'logseq-follow-page-at-point)
   (define-key map "\C-c\C-r" 'logseq-get-all-pages)
+  (define-key map "\C-c<" 'logseq-markdown-outdent-block)
+  (define-key map "\C-c>" 'logseq-markdown-indent-block)
 )
 
 ;; convenience
