@@ -548,6 +548,9 @@ the buffer)."
           (setf (plist-get (car ast) :properties)
                 (cons `(:key ,key :value ,value) properties))))
 
+       ((logseq-markdown--parse-logbook-begin line)
+        (setq mode 'logbook))
+
        ((logseq-markdown--parse-continuous-text line)
         (let* ((original-text (plist-get (car ast) :text))
                (text (plist-get line :text)))
@@ -583,6 +586,14 @@ the buffer)."
           (setf (plist-get (car ast) :text)
                 (cons text original-text))))
        ))
+
+     ((eq mode 'logbook)
+      (cond
+       ((logseq-markdown--parse-logbook-end line)
+        (setq mode 'text))
+
+       (t
+        )))
      )
     `(:mode ,mode :ast ,ast)))
 
@@ -612,6 +623,12 @@ the buffer)."
 
 (defun logseq-markdown--parse-quote-end (line)
   (string-match-p "^#\\+END_QUOTE" (plist-get line :text)))
+
+(defun logseq-markdown--parse-logbook-begin (line)
+  (string-match-p "^:LOGBOOK:" (plist-get line :text)))
+
+(defun logseq-markdown--parse-logbook-end (line)
+  (string-match-p "^:END:" (plist-get line :text)))
 
 (defun logseq-markdown--parse-table (line)
   (string-match-p "^|.+|" (plist-get line :text)))
