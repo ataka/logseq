@@ -459,6 +459,20 @@ the buffer)."
   (interactive (list (completing-read "Page: " (logseq--page-names))))
   (insert (format "[[%s]]" page-name)))
 
+(defun logseq-markdown-indent-and-new-line ()
+  (interactive)
+  (let* ((line (save-excursion
+                 (forward-line 0)
+                 (logseq-markdown--scan-line)))
+         (hasPrefix     (plist-get line :hasPrefix))
+         (tabs-length   (plist-get line :tabs))
+         (spaces-length (plist-get line :spaces))
+         (tabs   (make-string tabs-length ?\t))
+         (spaces (make-string spaces-length ? )))
+    (if hasPrefix
+        (insert "\n" tabs "-" spaces)
+      (insert "\n" tabs spaces))))
+
 ;;
 ;; Export
 ;;
@@ -803,6 +817,7 @@ See `imenu-create-index-function' and `imenu--index-alist' for details."
 
 (let ((map logseq-markdown-mode-map))
   (define-key map "[" 'logseq-markdown-electric-open-blacket)
+  (define-key map "\r" 'logseq-markdown-indent-and-new-line)
   (define-key map "\C-c\r"   'logseq-follow-page-at-point)
   (define-key map "\C-c\C-r" 'logseq-get-all-pages)
 )
